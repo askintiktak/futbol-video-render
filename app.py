@@ -1,7 +1,6 @@
 import os
 import uuid
 import json
-import subprocess
 from pathlib import Path
 
 from flask import Flask, request, jsonify, send_from_directory
@@ -32,12 +31,34 @@ def health():
 @app.post("/render")
 def render_video():
 
+    # 1) Önce normal JSON olarak okumayı dene
     data = request.get_json(silent=True)
 
-    if not data:
+    # 2) n8n body'yi text/plain veya farklı content-type ile
+    # gönderirse ham body'yi JSON olarak parse et
+    if data is None:
+
+        raw_body = request.get_data(as_text=True)
+
+        if raw_body:
+            try:
+                data = json.loads(raw_body)
+            except Exception:
+                data = None
+
+    # 3) JSON string içinde JSON geldiyse bir kez daha çöz
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except Exception:
+            pass
+
+    if not isinstance(data, dict):
         return jsonify({
             "success": False,
-            "error": "JSON verisi bulunamadı"
+            "error": "JSON verisi bulunamadı",
+            "content_type": request.content_type,
+            "raw_body": request.get_data(as_text=True)[:500]
         }), 400
 
     required_fields = [
@@ -59,7 +80,8 @@ def render_video():
     ]
 
     missing = [
-        field for field in required_fields
+        field
+        for field in required_fields
         if field not in data
     ]
 
@@ -72,8 +94,6 @@ def render_video():
 
     job_id = str(uuid.uuid4())
 
-    # Şimdilik video üretmeden önce n8n -> Render
-    # veri aktarımını doğruluyoruz.
     input_file = OUTPUT_DIR / f"{job_id}.json"
 
     with open(input_file, "w", encoding="utf-8") as f:
@@ -96,6 +116,7 @@ def render_video():
 
 @app.get("/outputs/<path:filename>")
 def outputs(filename):
+
     return send_from_directory(
         OUTPUT_DIR,
         filename,
@@ -104,7 +125,13 @@ def outputs(filename):
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
+
+    port = int(
+        os.environ.get(
+            "PORT",
+            10000
+        )
+    )
 
     app.run(
         host="0.0.0.0",
